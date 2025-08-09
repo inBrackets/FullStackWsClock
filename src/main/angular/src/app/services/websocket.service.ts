@@ -1,6 +1,6 @@
 import { Injectable } from '@angular/core';
 import SockJS from 'sockjs-client';
-import {Client, CompatClient, Stomp} from '@stomp/stompjs';
+import { Client, IMessage } from '@stomp/stompjs';
 import { Subject } from 'rxjs';
 
 @Injectable({
@@ -8,10 +8,10 @@ import { Subject } from 'rxjs';
 })
 export class WebsocketService {
 
-  stompClient!: CompatClient;
+  private stompClient!: Client; // Modern STOMP client
 
-  timeStampTopic = "/topic/timestamp";
-  websocketEndpoint: string = "http://localhost:8080/gs-guide-websocket";
+  readonly timeStampTopic = "/topic/timestamp";
+  readonly websocketEndpoint = "http://localhost:8080/gs-guide-websocket";
 
   // Subject to push timestamp updates
   timestamp$ = new Subject<string>();
@@ -20,34 +20,46 @@ export class WebsocketService {
 
   connect() {
     console.log("Initialize Websocket Connection");
-    let ws = SockJS(this.websocketEndpoint);
-    this.stompClient = Stomp.over(ws);
-    this.stompClient.debug = () => {};
-    this.stompClient.connect({}, (frame: any) => {
-      this.stompClient?.subscribe(this.timeStampTopic, (timeStampResponse: any) => {
-        this.onTimeStampMessageReceived(timeStampResponse);
-      });
-    }, this.errorCallBack);
-  };
 
-  disconnected() {
-    if (this.stompClient !== null) {
-      this.stompClient.disconnect();
+    this.stompClient = new Client({
+      // Use SockJS as the transport
+      webSocketFactory: () => new SockJS(this.websocketEndpoint),
+
+      // Optional: disable verbose internal logging
+      debug: () => {},
+
+      // Called on successful connection
+      onConnect: () => {
+        this.stompClient.subscribe(this.timeStampTopic, (message: IMessage) => {
+          this.onTimeStampMessageReceived(message);
+        });
+      },
+
+      // Called on error or disconnect
+      onStompError: (frame) => {
+        console.error("Broker error:", frame.headers['message'], frame.body);
+      },
+      onWebSocketError: (error) => {
+        console.error("WebSocket error:", error);
+      },
+
+      // Reconnect automatically after 5 seconds
+      reconnectDelay: 5000
+    });
+
+    this.stompClient.activate();
+  }
+
+  disconnect() {
+    if (this.stompClient && this.stompClient.active) {
+      this.stompClient.deactivate();
+      console.log("Disconnected");
     }
-    console.log("Disconnected");
   }
 
-  // on error, schedule a reconnection attempt
-  errorCallBack(error: any) {
-    console.log("errorCallBack -> " + error)
-    setTimeout(() => {
-      this.connect();
-    }, 5000);
-  }
-
-  onTimeStampMessageReceived(message: any) {
+  private onTimeStampMessageReceived(message: IMessage) {
     const timestamp = message.body;
     console.log("Message Received Timestamp::", timestamp);
-    this.timestamp$.next(timestamp); // Push new value to subscribers
+    this.timestamp$.next(timestamp);
   }
 }
