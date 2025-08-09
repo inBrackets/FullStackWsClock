@@ -1,0 +1,101 @@
+name: Build and Release JAR
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag under which the release would be published.'
+        required: true
+        default: 'v0.0.1'
+
+jobs:
+  build:
+    env:
+      REPO_NAME: ${{ github.event.repository.name }}
+      TAG_NAME: ${{ github.event.inputs.tag }}
+    permissions: write-all
+    runs-on: ubuntu-latest
+
+    services:
+      mariadb:
+        image: mariadb:10.5
+        ports:
+          - 3306:3306
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: testdb
+          MARIADB_USER: testuser
+          MARIADB_PASSWORD: testpass
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v3
+
+      - name: 🏷️ Extract Project Name and Tag Name
+        id: extract_info
+        run: |
+          echo "repo_name=$REPO_NAME" >> $REPO_NAME
+          echo "tag_name=$TAG_NAME" >> $TAG_NAME
+
+      - name: ☕ Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 📦 Cache Maven packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.m2
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: 🕓 Wait for MariaDB to be ready
+        run: |
+          until mysqladmin ping -h 127.0.0.1 -u testuser -ptestpass --silent; do
+            echo "Waiting for MariaDB..."
+            sleep 5
+          done
+
+      - name: 🔨 Build the Java project with Maven
+        run: mvn clean package -Pwith-angular -e
+
+      - name: 🧪 Publish test report for backend
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Maven Tests
+          path: target/surefire-reports/*.xml
+          reporter: java-junit
+          fail-on-error: true
+
+      - name: 📦 Create GitHub release for the tag and upload the JAR
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.TAG_NAME }}
+          release_name: Release ${{ env.TAG_NAME }}
+          draft: false
+          prerelease: true
+
+      - name: ☁️ Upload the JAR file to the release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: target/FullStackWsClock-0.0.1-SNAPSHOT.jar
+          asset_name: ${{ env.REPO_NAME }}-${{ env.TAG_NAME }}.jar
+          asset_content_type: application/java-archive
