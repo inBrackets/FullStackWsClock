@@ -27,6 +27,9 @@ export class WebsocketService {
 
       // Optional: disable verbose internal logging
       debug: () => {},
+      // debug: (msg: string) => {
+      //   console.log("%cSTOMP", "color: green;", msg.replace(/\u0000/g, "\\u0000"));
+      // },
 
       // Called on successful connection
       onConnect: () => {
